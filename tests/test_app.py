@@ -1,69 +1,69 @@
 import pytest
+import requests
+from unittest.mock import patch, MagicMock
+from extractor.app import upload_to_dospace
 import polars as pl
-from extractor.app import loader, extractor
-from requests.exceptions import RequestException
+
+@patch("extractor.app.requests.get")
+@patch("extractor.app.session.client")
+def test_upload_to_dospace_success(mock_s3_client, mock_requests_get):
+    # Mock the API response
+    mock_requests_get.return_value.json.return_value = {"key": "value"}
+    mock_requests_get.return_value.status_code = 200
+
+    # Mock the S3 client
+    mock_s3 = MagicMock()
+    mock_s3_client.return_value = mock_s3
+
+    # Call the function
+    url = "http://example.com/api"
+    df = pl.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+    bucket_name = "test-bucket"
+    object_name = "test-object"
+    upload_to_dospace(url, df, bucket_name, object_name)
+
+    # Assertions
+    mock_requests_get.assert_called_with(url)
+    mock_s3.put_object.assert_called_once_with(
+        Bucket=bucket_name,
+        Key=object_name,
+        Body={"key": "value"},
+        ContentType="application/json",
+    )
 
 
-def test_loader_success(tmp_path):
-    # Create a temporary directory and file path
-    temp_file = tmp_path / "test.parquet"
+@patch("extractor.app.requests.get")
+def test_upload_to_dospace_api_down(mock_requests_get):
+    # Mock the API to raise an exception
+    mock_requests_get.side_effect = requests.exceptions.RequestException("API is down")
 
-    # Create a sample polars DataFrame
-    df = pl.DataFrame({"column1": [1, 2, 3], "column2": ["a", "b", "c"]})
+    # Call the function and assert it raises SystemExit
+    url = "http://example.com/api"
+    df = pl.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+    bucket_name = "test-bucket"
+    object_name = "test-object"
 
-    # Call the loader function
-    loader(df, str(temp_file))
-
-    # Assert that the file was created
-    assert temp_file.exists()
-
-    # Read the file back and verify its contents
-    loaded_df = pl.read_parquet(temp_file)
-    assert df.frame_equal(loaded_df)
-
-
-def test_loader_failure(mocker):
-    # Mock the write_parquet method to raise an exception
-    mock_df = mocker.MagicMock()
-    mock_df.write_parquet.side_effect = Exception("Mocked exception")
-
-    # Assert that SystemExit is raised when an exception occurs
     with pytest.raises(SystemExit):
-        loader(mock_df, "invalid_path.parquet")
+        upload_to_dospace(url, df, bucket_name, object_name)
 
 
-def test_extractor_success(mocker):
-    # Mock the requests.get method to return a successful response
-    mock_response = mocker.Mock()
-    mock_response.json.return_value = [{"column1": 1, "column2": "a"}, {"column1": 2, "column2": "b"}]
-    mocker.patch("requests.get", return_value=mock_response)
+@patch("extractor.app.requests.get")
+@patch("extractor.app.session.client")
+def test_upload_to_dospace_upload_failure(mock_s3_client, mock_requests_get):
+    # Mock the API response
+    mock_requests_get.return_value.json.return_value = {"key": "value"}
+    mock_requests_get.return_value.status_code = 200
 
-    # Call the extractor function
-    url = "http://mocked-url.com"
-    df = extractor(url)
+    # Mock the S3 client to raise an exception
+    mock_s3 = MagicMock()
+    mock_s3.put_object.side_effect = Exception("Upload failed")
+    mock_s3_client.return_value = mock_s3
 
-    # Assert that the returned DataFrame matches the expected data
-    expected_df = pl.DataFrame({"column1": [1, 2], "column2": ["a", "b"]})
-    assert df.frame_equal(expected_df)
+    # Call the function and assert it raises SystemExit
+    url = "http://example.com/api"
+    df = pl.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+    bucket_name = "test-bucket"
+    object_name = "test-object"
 
-
-def test_extractor_api_down(mocker):
-    # Mock the requests.get method to raise a RequestException
-    mocker.patch("requests.get", side_effect=RequestException("API is down"))
-
-    # Assert that SystemExit is raised when the API is down
-    url = "http://mocked-url.com"
     with pytest.raises(SystemExit):
-        extractor(url)
-
-
-def test_extractor_data_conversion_failure(mocker):
-    # Mock the requests.get method to return invalid JSON data
-    mock_response = mocker.Mock()
-    mock_response.json.return_value = "invalid_data"
-    mocker.patch("requests.get", return_value=mock_response)
-
-    # Assert that SystemExit is raised when data conversion fails
-    url = "http://mocked-url.com"
-    with pytest.raises(SystemExit):
-        extractor(url)
+        upload_to_dospace(url, df, bucket_name, object_name)
